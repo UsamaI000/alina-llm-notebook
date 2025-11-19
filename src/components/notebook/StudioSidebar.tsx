@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
@@ -19,10 +20,12 @@ interface StudioSidebarProps {
 }
 
 const StudioSidebar = ({
-  notebookId,
+  notebookId: propNotebookId,
   isExpanded,
   onCitationClick
 }: StudioSidebarProps) => {
+  const params = useParams();
+  const notebookId = propNotebookId || params.notebookId || params.id;
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [isCreatingNote, setIsCreatingNote] = useState(false);
   const [activeView, setActiveView] = useState<'main' | 'quiz'>('main');
@@ -58,6 +61,14 @@ const StudioSidebar = ({
   const notebook = notebooks?.find(n => n.id === notebookId);
   const hasValidAudio = notebook?.audio_overview_url && !checkAudioExpiry(notebook.audio_url_expires_at);
   const currentStatus = generationStatus || notebook?.audio_overview_generation_status;
+
+  useEffect(() => {
+    if (!notebookId) {
+      console.error("StudioSidebar: No notebookId found in props or URL parameters!");
+    } else {
+      console.log("StudioSidebar: Using notebookId:", notebookId);
+    }
+  }, [notebookId]);
 
   useEffect(() => {
     if (!notebookId || !notebook?.audio_overview_url) return;
