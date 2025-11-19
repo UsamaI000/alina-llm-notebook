@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Play, Pause, RotateCcw, Volume2, Download, MoreVertical, Trash2, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, Download, MoreVertical, Trash2, Loader2, RefreshCw, AlertTriangle, Disc } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface AudioPlayerProps {
@@ -60,10 +59,8 @@ const AudioPlayer = ({
       setLoading(false);
       setIsPlaying(false);
       
-      // If the URL has expired and we have a notebookId, try to refresh it automatically
       if ((isExpired || audioError?.includes('403') || audioError?.includes('expired')) && 
           notebookId && onUrlRefresh && retryCount < 2 && !autoRetryInProgress) {
-        console.log('Audio URL expired or access denied, attempting automatic refresh...');
         setAutoRetryInProgress(true);
         setRetryCount(prev => prev + 1);
         onUrlRefresh(notebookId);
@@ -71,11 +68,10 @@ const AudioPlayer = ({
       }
 
       if (retryCount < 2 && !autoRetryInProgress) {
-        // Auto-retry up to 2 times for transient errors
         setTimeout(() => {
           setRetryCount(prev => prev + 1);
           audio.load();
-        }, 1000 * (retryCount + 1)); // Exponential backoff
+        }, 1000 * (retryCount + 1));
       } else {
         setAudioError('Failed to load audio');
         setAutoRetryInProgress(false);
@@ -91,9 +87,7 @@ const AudioPlayer = ({
     };
 
     const handleLoadStart = () => {
-      if (autoRetryInProgress) {
-        setLoading(true);
-      }
+      if (autoRetryInProgress) setLoading(true);
     };
 
     audio.addEventListener('timeupdate', updateTime);
@@ -113,11 +107,9 @@ const AudioPlayer = ({
     };
   }, [onError, isExpired, retryCount, notebookId, onUrlRefresh, audioError, autoRetryInProgress]);
 
-  // Reload audio when URL changes (for automatic refresh)
   useEffect(() => {
     const audio = audioRef.current;
     if (audio && autoRetryInProgress) {
-      console.log('Reloading audio with new URL...');
       audio.load();
     }
   }, [audioUrl, autoRetryInProgress]);
@@ -143,7 +135,6 @@ const AudioPlayer = ({
   const handleSeek = (value: number[]) => {
     const audio = audioRef.current;
     if (!audio || audioError) return;
-
     const time = value[0];
     audio.currentTime = time;
     setCurrentTime(time);
@@ -152,7 +143,6 @@ const AudioPlayer = ({
   const handleVolumeChange = (value: number[]) => {
     const audio = audioRef.current;
     if (!audio) return;
-
     const vol = value[0];
     audio.volume = vol;
     setVolume(vol);
@@ -161,7 +151,6 @@ const AudioPlayer = ({
   const restart = () => {
     const audio = audioRef.current;
     if (!audio || audioError) return;
-
     audio.currentTime = 0;
     setCurrentTime(0);
   };
@@ -169,7 +158,6 @@ const AudioPlayer = ({
   const retryLoad = () => {
     const audio = audioRef.current;
     if (!audio) return;
-
     setLoading(true);
     setAudioError(null);
     setRetryCount(0);
@@ -185,254 +173,175 @@ const AudioPlayer = ({
 
   const downloadAudio = async () => {
     setIsDownloading(true);
-    
     try {
-      // Fetch the audio file
       const response = await fetch(audioUrl);
-      if (!response.ok) {
-        throw new Error('Failed to fetch audio file');
-      }
-      
-      // Create a blob from the response
+      if (!response.ok) throw new Error('Failed to fetch audio file');
       const blob = await response.blob();
-      
-      // Create a temporary URL for the blob
       const blobUrl = URL.createObjectURL(blob);
-      
-      // Create a temporary anchor element and trigger download
       const link = document.createElement('a');
       link.href = blobUrl;
       link.download = `${title}.mp3`;
       document.body.appendChild(link);
       link.click();
-      
-      // Clean up
       document.body.removeChild(link);
       URL.revokeObjectURL(blobUrl);
-      
-      toast({
-        title: "Download Started",
-        description: "Your audio file is being downloaded.",
-      });
+      toast({ title: "Download Started", description: "Your audio file is being downloaded." });
     } catch (error) {
-      console.error('Download failed:', error);
-      toast({
-        title: "Download Failed",
-        description: "Failed to download the audio file. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Download Failed", description: "Failed to download audio.", variant: "destructive" });
     } finally {
       setIsDownloading(false);
     }
   };
 
   const deleteAudio = async () => {
-    if (!notebookId) {
-      toast({
-        title: "Error",
-        description: "Cannot delete audio - notebook ID not found",
-        variant: "destructive",
-      });
-      return;
-    }
-
+    if (!notebookId) return;
     setIsDeleting(true);
-    
     try {
       const { supabase } = await import('@/integrations/supabase/client');
-      
-      // First, try to remove all files in the notebook folder from storage
       try {
-        console.log('Attempting to list files in folder:', notebookId);
-        
-        // List all files in the notebook folder
-        const { data: files, error: listError } = await supabase.storage
-          .from('audio')
-          .list(notebookId);
-
-        if (listError) {
-          console.error('Error listing files:', listError);
-        } else if (files && files.length > 0) {
-          // Delete all files in the folder
+        const { data: files } = await supabase.storage.from('audio').list(notebookId);
+        if (files && files.length > 0) {
           const filePaths = files.map(file => `${notebookId}/${file.name}`);
-          console.log('Deleting files:', filePaths);
-          
-          const { error: deleteError } = await supabase.storage
-            .from('audio')
-            .remove(filePaths);
-
-          if (deleteError) {
-            console.error('Error deleting files from storage:', deleteError);
-          } else {
-            console.log('Successfully deleted files from storage');
-          }
+          await supabase.storage.from('audio').remove(filePaths);
         }
-      } catch (storageError) {
-        console.error('Storage operation failed:', storageError);
-        // Continue with database update even if storage deletion fails
-      }
+      } catch (e) { console.error(e); }
 
-      // Update the notebook to clear audio overview fields
-      const { error } = await supabase
-        .from('notebooks')
-        .update({
-          audio_overview_url: null,
-          audio_url_expires_at: null,
-          audio_overview_generation_status: null
-        })
-        .eq('id', notebookId);
+      const { error } = await supabase.from('notebooks').update({
+        audio_overview_url: null,
+        audio_url_expires_at: null,
+        audio_overview_generation_status: null
+      }).eq('id', notebookId);
 
-      if (error) {
-        console.error('Error updating notebook:', error);
-        throw error;
-      }
-
-      toast({
-        title: "Audio Deleted",
-        description: "The audio overview and associated files have been successfully deleted.",
-      });
-
-      // Call the onDeleted callback to update parent component
+      if (error) throw error;
+      toast({ title: "Audio Deleted", description: "Audio overview deleted successfully." });
       onDeleted?.();
-
     } catch (error) {
-      console.error('Failed to delete audio:', error);
-      toast({
-        title: "Delete Failed",
-        description: "Failed to delete the audio overview. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Delete Failed", description: "Could not delete audio.", variant: "destructive" });
     } finally {
       setIsDeleting(false);
     }
   };
 
   return (
-    <Card className="p-4 space-y-4">
+    <div className="w-full rounded-xl overflow-hidden shadow-lg relative bg-gradient-to-br from-gray-900 via-purple-950 to-indigo-950 text-white border border-white/10">
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
       
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <h4 className="font-medium text-gray-900">{title}</h4>
+      {/* Background Decoration */}
+      <div className="absolute top-0 right-0 -mt-10 -mr-10 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div className="relative z-10 p-5">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6">
+          <div className="flex items-center space-x-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isPlaying ? 'bg-purple-500/20 text-purple-200 ring-1 ring-purple-500/50' : 'bg-white/10 text-white/60'}`}>
+              <Disc className={`h-5 w-5 ${isPlaying ? 'animate-spin-slow' : ''}`} />
+            </div>
+            <div>
+              <h4 className="font-semibold text-sm text-white tracking-wide">Deep Dive</h4>
+              <p className="text-xs text-purple-200/60">Audio Overview</p>
+            </div>
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-white/60 hover:text-white hover:bg-white/10 rounded-full" disabled={isDeleting}>
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="bg-gray-900 border-gray-800 text-gray-200">
+              <DropdownMenuItem onClick={downloadAudio} disabled={isDownloading} className="focus:bg-white/10 focus:text-white cursor-pointer">
+                {isDownloading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+                Download
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={deleteAudio} className="text-red-400 focus:text-red-300 focus:bg-red-900/20 cursor-pointer" disabled={isDeleting}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" disabled={isDeleting}>
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <MoreVertical className="h-4 w-4" />
-              )}
+
+        {/* Visualizer Bars (Simulated) */}
+        <div className="h-12 flex items-center justify-center gap-1 mb-6 px-4 opacity-80">
+            {[...Array(20)].map((_, i) => (
+                <div 
+                    key={i} 
+                    className={`w-1 rounded-full bg-gradient-to-t from-purple-400 to-blue-400 transition-all duration-300 ease-in-out ${isPlaying ? 'animate-pulse' : 'h-1'}`}
+                    style={{ 
+                        height: isPlaying ? `${Math.max(15, Math.random() * 100)}%` : '4px',
+                        animationDelay: `${i * 0.05}s` 
+                    }}
+                ></div>
+            ))}
+        </div>
+
+        {/* Error Display */}
+        {audioError && !autoRetryInProgress && (
+          <div className="mb-4 p-2 bg-red-500/10 border border-red-500/20 rounded text-center">
+            <p className="text-xs text-red-300 mb-2">{audioError}</p>
+            <Button size="sm" variant="outline" onClick={onRetry || retryLoad} className="h-6 text-xs border-red-400/30 text-red-300 hover:bg-red-500/20">
+              <RefreshCw className="h-3 w-3 mr-1" /> Retry
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={downloadAudio} disabled={isDownloading}>
-              {isDownloading ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4 mr-2" />
-              )}
-              {isDownloading ? 'Downloading...' : 'Download'}
-            </DropdownMenuItem>
-            <DropdownMenuItem 
-              onClick={deleteAudio}
-              className="text-red-600 focus:text-red-600"
-              disabled={isDeleting}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+          </div>
+        )}
 
-      {/* Auto-refresh indicator */}
-      {autoRetryInProgress && (
-        <div className="flex items-center justify-between p-3 bg-blue-50 rounded-md border border-blue-200">
-          <div className="flex items-center space-x-2">
-            <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
-            <span className="text-sm text-blue-600">Refreshing audio access...</span>
+        {/* Progress Bar */}
+        <div className="space-y-2 mb-4">
+          <Slider
+            value={[currentTime]}
+            max={duration || 100}
+            step={1}
+            onValueChange={handleSeek}
+            className="w-full cursor-pointer [&>span:first-child]:h-1 [&>span:first-child]:bg-white/20 [&_[role=slider]]:bg-white [&_[role=slider]]:border-transparent [&_[role=slider]]:w-3 [&_[role=slider]]:h-3 [&_[role=slider]]:focus:ring-purple-500/50"
+            disabled={loading || !!audioError}
+          />
+          <div className="flex justify-between text-[10px] font-medium text-white/40 uppercase tracking-wider">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
           </div>
         </div>
-      )}
 
-      {/* Error State */}
-      {audioError && !autoRetryInProgress && (
-        <div className="flex items-center justify-between p-3 bg-red-50 rounded-md border border-red-200">
-          <div className="flex items-center space-x-2">
-            <AlertTriangle className="h-4 w-4 text-red-600" />
-            <span className="text-sm text-red-600">{audioError}</span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRetry || retryLoad}
-            className="text-red-600 border-red-300 hover:bg-red-50"
-          >
-            <RefreshCw className="h-4 w-4 mr-1" />
-            Retry
-          </Button>
-        </div>
-      )}
-
-      {/* Progress Bar */}
-      <div className="space-y-2">
-        <Slider
-          value={[currentTime]}
-          max={duration || 100}
-          step={1}
-          onValueChange={handleSeek}
-          className="w-full"
-          disabled={loading || !!audioError}
-        />
-        <div className="flex justify-between text-xs text-gray-500">
-          <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
-        </div>
-      </div>
-
-      {/* Controls */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
+        {/* Controls */}
+        <div className="flex items-center justify-between">
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
             onClick={restart}
+            className="text-white/60 hover:text-white hover:bg-white/10 rounded-full w-8 h-8"
             disabled={loading || !!audioError}
           >
             <RotateCcw className="h-4 w-4" />
           </Button>
           
           <Button
-            variant="default"
-            size="sm"
             onClick={togglePlayPause}
             disabled={loading || !!audioError}
-            className="w-12"
+            className="w-14 h-14 rounded-full bg-white text-purple-950 hover:bg-purple-50 hover:scale-105 transition-all shadow-lg shadow-purple-900/20 flex items-center justify-center"
           >
             {loading ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+              <Loader2 className="h-6 w-6 animate-spin text-purple-900" />
             ) : isPlaying ? (
-              <Pause className="h-4 w-4" />
+              <Pause className="h-6 w-6 fill-current" />
             ) : (
-              <Play className="h-4 w-4" />
+              <Play className="h-6 w-6 fill-current ml-1" />
             )}
           </Button>
-        </div>
 
-        {/* Volume Control */}
-        <div className="flex items-center space-x-2 w-24">
-          <Volume2 className="h-4 w-4 text-gray-500" />
-          <Slider
-            value={[volume]}
-            max={1}
-            step={0.1}
-            onValueChange={handleVolumeChange}
-            className="flex-1"
-          />
+          {/* Volume Control (Compact) */}
+          <div className="group flex items-center w-24 space-x-2">
+            <Volume2 className="h-4 w-4 text-white/60" />
+            <Slider
+              value={[volume]}
+              max={1}
+              step={0.1}
+              onValueChange={handleVolumeChange}
+              className="flex-1 [&>span:first-child]:h-1 [&>span:first-child]:bg-white/20 [&_[role=slider]]:bg-white [&_[role=slider]]:h-3 [&_[role=slider]]:w-3"
+            />
+          </div>
         </div>
       </div>
-    </Card>
+    </div>
   );
 };
 
