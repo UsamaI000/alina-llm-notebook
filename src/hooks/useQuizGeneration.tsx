@@ -61,18 +61,29 @@ export const useQuizGeneration = (notebookId?: string) => {
 
   // 3. Mutation: Generate New Quiz
   const generateQuiz = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (questionCount: number = 5) => { // <--- ACCEPT ARGUMENT
       if (!notebookId) throw new Error("No notebook ID");
+      
       const { data, error } = await supabase.functions.invoke('generate-quiz', {
-        body: { notebook_id: notebookId, no_of_questions: 5 }
+        body: { 
+            notebook_id: notebookId,
+            no_of_questions: questionCount // <--- PASS TO BACKEND
+        }
       });
+
       if (error) throw error;
       return data;
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] }); },
-    onError: (error) => { 
+    onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] });
+    },
+    onError: (error) => {
       console.error('Quiz generation failed:', error);
-      toast({ title: "Error", description: "Failed to start quiz generation.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to start quiz generation.",
+        variant: "destructive",
+      });
     }
   });
 
