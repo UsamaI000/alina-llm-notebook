@@ -60,20 +60,26 @@ serve(async (req)=>{
     const webhookData = await webhookResponse.json();
     // Handle different response formats (Array vs Object)
     let questions = [];
-    if (Array.isArray(webhookData) && webhookData[0]?.output?.questions) {
-      questions = webhookData[0].output.questions;
-    } else if (webhookData.data && Array.isArray(webhookData.data) && webhookData.data[0]?.output?.questions) {
-      questions = webhookData.data[0].output.questions;
+    let quizTitle = null;
+    // Case 1: Standard Array Format [ { output: { ... } } ]
+    if (Array.isArray(webhookData) && webhookData[0]?.output) {
+      questions = webhookData[0].output.questions || [];
+      quizTitle = webhookData[0].output.quiz_title || null;
+    } else if (webhookData.data && Array.isArray(webhookData.data) && webhookData.data[0]?.output) {
+      questions = webhookData.data[0].output.questions || [];
+      quizTitle = webhookData.data[0].output.quiz_title || null;
     } else if (webhookData.questions) {
       questions = webhookData.questions;
+      quizTitle = webhookData.quiz_title || null;
     } else {
       console.error("Unexpected n8n format:", JSON.stringify(webhookData));
       throw new Error("Could not find 'questions' in n8n response");
     }
-    console.log(`Extracted ${questions.length} questions. Saving to Quiz ID: ${newQuiz.id}...`);
+    console.log(`Extracted ${questions.length} questions. Title: ${quizTitle}.Saving to Quiz ID: ${newQuiz.id}...`);
     // 6. Update the SPECIFIC Quiz Row (completed)
     const { error: updateError } = await supabase.from('quizzes').update({
       questions: questions,
+      title: quizTitle,
       status: 'completed'
     }).eq('id', newQuiz.id); // Update ONLY the row we just created
     if (updateError) {

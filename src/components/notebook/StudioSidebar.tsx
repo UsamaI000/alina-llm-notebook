@@ -5,8 +5,16 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { 
     Edit, User, Loader2, AlertCircle, CheckCircle2, 
-    Play, Sparkles, BrainCircuit, BookOpen, ArrowRight, ChevronRight, Clock, Plus
+    Play, Sparkles, BrainCircuit, BookOpen, ArrowRight, 
+    ChevronRight, Clock, Plus, MoreVertical, Trash2, Share2 
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
 import { useNotes, Note } from '@/hooks/useNotes';
 import { useAudioOverview } from '@/hooks/useAudioOverview';
 import { useNotebooks } from '@/hooks/useNotebooks';
@@ -15,9 +23,11 @@ import { formatDistanceToNow } from 'date-fns';
 import NoteEditor from './NoteEditor';
 import AudioPlayer from './AudioPlayer';
 import QuizGenerator from './QuizGenerator';
-import QuizConfigDialog from './QuizConfigDialog'; // Import the new dialog
+import QuizConfigDialog from './QuizConfigDialog';
+import RenameQuizDialog from './RenameQuizDialog';
 import { useQuizGeneration, Quiz } from '@/hooks/useQuizGeneration';
 import { Citation } from '@/types/message';
+import { useToast } from '@/hooks/use-toast'; // Import toast hook
 
 interface StudioSidebarProps {
   notebookId?: string;
@@ -32,6 +42,7 @@ const StudioSidebar = ({
 }: StudioSidebarProps) => {
   const params = useParams();
   const notebookId = propNotebookId || params.notebookId || params.id;
+  const { toast } = useToast(); // Initialize toast
 
   // --- Hooks & State ---
   const [editingNote, setEditingNote] = useState<Note | null>(null);
@@ -40,7 +51,11 @@ const StudioSidebar = ({
   // Quiz State
   const [activeView, setActiveView] = useState<'main' | 'quiz'>('main');
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
-  const [showQuizConfig, setShowQuizConfig] = useState(false); // State for the config dialog
+  const [showQuizConfig, setShowQuizConfig] = useState(false);
+  
+  // Rename Quiz State
+  const [quizToRename, setQuizToRename] = useState<Quiz | null>(null);
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
 
   const [audioError, setAudioError] = useState(false);
   const [quickNoteContent, setQuickNoteContent] = useState('');
@@ -56,6 +71,8 @@ const StudioSidebar = ({
   const { 
     quizzes, 
     generateQuiz, 
+    renameQuiz,
+    deleteQuiz,
     isGenerating: isStartingQuiz 
   } = useQuizGeneration(notebookId);
   
@@ -107,18 +124,78 @@ const StudioSidebar = ({
   const handleAudioError = () => setAudioError(true);
 
   // Quiz Logic
-  const handleCreateQuizClick = () => {
-    // Open the dialog instead of generating immediately
-    setShowQuizConfig(true);
-  };
-
-  const handleGenerateQuiz = (count: number) => {
-    // Called by the dialog with the selected number of questions
-    generateQuiz(count);
-  };
-
+  const handleCreateQuizClick = () => { setShowQuizConfig(true); };
+  const handleGenerateQuiz = (count: number) => { generateQuiz(count); };
   const handleOpenQuiz = (quiz: Quiz) => { setSelectedQuiz(quiz); setActiveView('quiz'); };
   const handleBackFromQuiz = () => { setActiveView('main'); setSelectedQuiz(null); };
+
+  // Quiz Actions (Rename, Delete, Share)
+  const handleRenameClick = (e: React.MouseEvent, quiz: Quiz) => {
+    e.stopPropagation();
+    setQuizToRename(quiz);
+    setShowRenameDialog(true);
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, quiz: Quiz) => {
+    e.stopPropagation();
+    if (confirm('Are you sure you want to delete this quiz?')) {
+        deleteQuiz(quiz.id);
+    }
+  };
+
+  // UPDATED: Safe Share Function
+  const handleShareClick = async (e: React.MouseEvent, quiz: Quiz) => {
+    e.stopPropagation();
+    e.preventDefault(); // Prevent immediate menu close which can steal focus
+    
+    const scoreText = quiz.score 
+        ? `I scored ${quiz.score}/${quiz.questions?.length} on this quiz in Alina!` 
+        : 'Check out this quiz I generated with Alina!';
+    
+    try {
+        // Method 1: Modern API (Works on HTTPS / Localhost)
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(scoreText);
+        } 
+        // Method 2: Fallback (Works everywhere else)
+        else {
+            const textArea = document.createElement("textarea");
+            textArea.value = scoreText;
+            
+            // Make it invisible but part of the DOM
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            textArea.style.top = "0";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+            
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            
+            if (!successful) throw new Error('Fallback copy failed');
+        }
+
+        toast({
+            title: "Copied!",
+            description: "Quiz result copied to clipboard.",
+        });
+    } catch (err) {
+        console.error("Copy error:", err);
+        toast({
+            title: "Error",
+            description: "Could not copy text. Please copy manually.",
+            variant: "destructive",
+        });
+    }
+  };
+
+  const handleRenameConfirm = (newTitle: string) => {
+    if (quizToRename) {
+        renameQuiz({ quizId: quizToRename.id, title: newTitle });
+    }
+  };
 
   // --- Render Views ---
 
@@ -224,9 +301,9 @@ const StudioSidebar = ({
                                     ${quiz.status === 'completed' ? 'bg-white border-gray-200 hover:border-emerald-300 cursor-pointer hover:shadow-sm' : 'bg-gray-50 border-gray-100 opacity-80'}
                                 `}
                             >
-                                <div className="flex items-center gap-3 z-10">
+                                <div className="flex items-center gap-3 z-10 flex-1 min-w-0">
                                     {/* Circular Index/Status Icon */}
-                                    <div className={`h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold border shadow-sm
+                                    <div className={`h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold border shadow-sm flex-shrink-0
                                         ${quiz.status === 'completed' 
                                             ? 'bg-emerald-50 text-emerald-600 border-emerald-100 group-hover:bg-emerald-100' 
                                             : 'bg-gray-100 text-gray-400 border-gray-200'}
@@ -234,9 +311,11 @@ const StudioSidebar = ({
                                         {quiz.status === 'generating' ? <Loader2 className="h-4 w-4 animate-spin" /> : (quizzes.length - index)}
                                     </div>
                                     
-                                    <div>
-                                        <h4 className="text-sm font-medium text-gray-900 group-hover:text-emerald-700 transition-colors">
-                                            {quiz.status === 'generating' ? 'Generating Quiz...' : `Quiz #${quizzes.length - index}`}
+                                    <div className="min-w-0 flex-1">
+                                        <h4 className="text-sm font-medium text-gray-900 truncate pr-2">
+                                            {quiz.status === 'generating' 
+                                                ? 'Generating Quiz...' 
+                                                : (quiz.title || `Quiz #${quizzes.length - index}`)}
                                         </h4>
                                         <div className="flex items-center gap-2 mt-0.5">
                                             <p className="text-[10px] text-gray-500 flex items-center">
@@ -254,7 +333,33 @@ const StudioSidebar = ({
                                     </div>
                                 </div>
                                 
-                                {quiz.status === 'completed' && <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-emerald-500 z-10" />}
+                                {/* Right Side Actions */}
+                                <div className="flex items-center gap-1">
+                                    {quiz.status === 'completed' && (
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-gray-300 hover:text-gray-600 z-20 rounded-full">
+                                                    <MoreVertical className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end" className="w-40">
+                                                <DropdownMenuItem onClick={(e) => handleRenameClick(e, quiz)}>
+                                                    <Edit className="h-4 w-4 mr-2" /> Rename
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={(e) => handleShareClick(e, quiz)}>
+                                                    <Share2 className="h-4 w-4 mr-2" /> Share Result
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={(e) => handleDeleteClick(e, quiz)} className="text-red-600 focus:text-red-600 focus:bg-red-50">
+                                                    <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    )}
+                                    
+                                    {quiz.status === 'completed' && (
+                                        <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-emerald-500" />
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -330,6 +435,13 @@ const StudioSidebar = ({
         onOpenChange={setShowQuizConfig}
         onGenerate={handleGenerateQuiz}
         isGenerating={isStartingQuiz}
+      />
+
+      <RenameQuizDialog 
+        open={showRenameDialog} 
+        onOpenChange={setShowRenameDialog} 
+        onConfirm={handleRenameConfirm}
+        currentTitle={quizToRename?.title || (quizToRename ? `Quiz` : '')}
       />
     </div>
   );

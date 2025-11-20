@@ -16,7 +16,8 @@ export interface Quiz {
   status: 'generating' | 'completed' | 'failed';
   questions: QuizQuestion[] | null;
   created_at: string;
-  score?: number; // This field exists in your DB
+  score?: number;
+  title?: string; // <--- Added title field
 }
 
 export const useQuizGeneration = (notebookId?: string) => {
@@ -49,8 +50,9 @@ export const useQuizGeneration = (notebookId?: string) => {
         (payload) => {
           queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] });
           const newData = payload.new as Quiz;
-          if (payload.eventType === 'UPDATE' && newData.status === 'completed' && !newData.score) {
-             // Only notify if it's a new completion, not a score update
+          // Only show toast for NEW completions (not renames/score updates)
+          if (payload.eventType === 'UPDATE' && newData.status === 'completed' && 
+              (payload.old as Quiz)?.status !== 'completed') {
             toast({ title: "Quiz Ready!", description: "A new quiz has been generated." });
           }
         }
@@ -59,51 +61,57 @@ export const useQuizGeneration = (notebookId?: string) => {
     return () => { supabase.removeChannel(channel); };
   }, [notebookId, queryClient, toast]);
 
-  // 3. Mutation: Generate New Quiz
+  // 3. Mutation: Generate
   const generateQuiz = useMutation({
-    mutationFn: async (questionCount: number = 5) => { // <--- ACCEPT ARGUMENT
+    mutationFn: async (questionCount: number = 5) => {
       if (!notebookId) throw new Error("No notebook ID");
-      
       const { data, error } = await supabase.functions.invoke('generate-quiz', {
-        body: { 
-            notebook_id: notebookId,
-            no_of_questions: questionCount // <--- PASS TO BACKEND
-        }
+        body: { notebook_id: notebookId, no_of_questions: questionCount }
       });
-
       if (error) throw error;
       return data;
     },
-    onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] });
-    },
-    onError: (error) => {
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] }); },
+    onError: (error) => { 
       console.error('Quiz generation failed:', error);
-      toast({
-        title: "Error",
-        description: "Failed to start quiz generation.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to start quiz generation.", variant: "destructive" });
     }
   });
 
-  // 4. NEW Mutation: Save Score
+  // 4. Mutation: Save Score
   const saveScore = useMutation({
     mutationFn: async ({ quizId, score }: { quizId: string, score: number }) => {
-      const { error } = await supabase
-        .from('quizzes')
-        .update({ score: score })
-        .eq('id', quizId);
-      
+      const { error } = await supabase.from('quizzes').update({ score: score }).eq('id', quizId);
       if (error) throw error;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] });
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] }); },
+    onError: (error) => { toast({ title: "Error", description: "Failed to save score.", variant: "destructive" }); }
+  });
+
+  // 5. NEW: Rename Quiz
+  const renameQuiz = useMutation({
+    mutationFn: async ({ quizId, title }: { quizId: string, title: string }) => {
+      const { error } = await supabase.from('quizzes').update({ title }).eq('id', quizId);
+      if (error) throw error;
     },
-    onError: (error) => {
-      console.error('Failed to save score:', error);
-      toast({ title: "Error", description: "Failed to save your score.", variant: "destructive" });
-    }
+    onSuccess: () => { 
+      queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] }); 
+      toast({ title: "Success", description: "Quiz renamed successfully." });
+    },
+    onError: () => { toast({ title: "Error", description: "Failed to rename quiz.", variant: "destructive" }); }
+  });
+
+  // 6. NEW: Delete Quiz
+  const deleteQuiz = useMutation({
+    mutationFn: async (quizId: string) => {
+      const { error } = await supabase.from('quizzes').delete().eq('id', quizId);
+      if (error) throw error;
+    },
+    onSuccess: () => { 
+      queryClient.invalidateQueries({ queryKey: ['quizzes', notebookId] }); 
+      toast({ title: "Deleted", description: "Quiz deleted successfully." });
+    },
+    onError: () => { toast({ title: "Error", description: "Failed to delete quiz.", variant: "destructive" }); }
   });
 
   return {
@@ -111,6 +119,8 @@ export const useQuizGeneration = (notebookId?: string) => {
     isLoadingQuizzes,
     generateQuiz: generateQuiz.mutate,
     isGenerating: generateQuiz.isPending,
-    saveScore: saveScore.mutate // Export the function
+    saveScore: saveScore.mutate,
+    renameQuiz: renameQuiz.mutate,
+    deleteQuiz: deleteQuiz.mutate
   };
 };
