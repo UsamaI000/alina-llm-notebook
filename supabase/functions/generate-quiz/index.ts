@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
@@ -11,50 +12,79 @@ serve(async (req)=>{
     });
   }
   try {
-    // 1. Parse the incoming request body
-    // FIX: Changed notebookId -> notebook_id to match the frontend request
-    const { notebookId, no_of_questions } = await req.json();
-    console.log('Received quiz generation request:', {
-      notebookId,
-      no_of_questions
-    });
-    // 2. Get environment variables
+    // 1. Parse request - Handle both camelCase and snake_case inputs just to be safe
+    const reqBody = await req.json();
+    const notebookId = reqBody.notebook_id || reqBody.notebookId;
+    const { no_of_questions } = reqBody;
+    console.log('Received quiz request for notebook:', notebookId);
+    if (!notebookId) {
+      throw new Error('Notebook ID is required');
+    }
+    // 2. Setup Supabase Client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    // 3. Get Env Variables
     const webhookUrl = Deno.env.get('QUIZ_GENERATION_WEBHOOK_URL');
     const authHeader = Deno.env.get('NOTEBOOK_GENERATION_AUTH');
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    if (!webhookUrl) {
-      throw new Error('QUIZ_GENERATION_WEBHOOK_URL environment variable not set');
-    }
-    // 3. Construct the payload matching your n8n workflow expectations
-    const payload = {
+    if (!webhookUrl) throw new Error('Missing QUIZ_GENERATION_WEBHOOK_URL');
+    // ---------------------------------------------------------
+    // NEW STEP: Create a "Generating" entry in the quizzes table
+    // ---------------------------------------------------------
+    const { data: newQuiz, error: insertError } = await supabase.from('quizzes').insert({
       notebook_id: notebookId,
-      no_of_questions: no_of_questions || 5,
-      callback_url: `${supabaseUrl}/functions/v1/quiz-generation-callback`
-    };
-    console.log('Sending payload to n8n:', JSON.stringify(payload));
-    // 4. Send request to n8n webhook
+      status: 'generating'
+    }).select().single();
+    if (insertError) {
+      console.error("DB Insert Error:", insertError);
+      throw insertError;
+    }
+    console.log('Created new quiz record:', newQuiz.id);
+    // 4. Call n8n Webhook
     const webhookResponse = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // Ensure this header matches your n8n Webhook Auth settings
-        // If n8n Auth is "None", this header is ignored but harmless
-        'Authorization': authHeader
+        'Authorization': authHeader || ''
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        notebook_id: notebookId,
+        no_of_questions: no_of_questions || 5,
+        timestamp: new Date().toISOString()
+      })
     });
     if (!webhookResponse.ok) {
-      console.error(`Webhook responded with status: ${webhookResponse.status}`);
-      const errorText = await webhookResponse.text();
-      console.error('Webhook error response:', errorText);
-      throw new Error(`Webhook responded with status: ${webhookResponse.status}`);
+      throw new Error(`n8n error: ${webhookResponse.status}`);
     }
+    // 5. Parse n8n Response
     const webhookData = await webhookResponse.json();
-    console.log('Webhook response:', webhookData);
-    // 5. Return success response to frontend
+    // Handle different response formats (Array vs Object)
+    let questions = [];
+    if (Array.isArray(webhookData) && webhookData[0]?.output?.questions) {
+      questions = webhookData[0].output.questions;
+    } else if (webhookData.data && Array.isArray(webhookData.data) && webhookData.data[0]?.output?.questions) {
+      questions = webhookData.data[0].output.questions;
+    } else if (webhookData.questions) {
+      questions = webhookData.questions;
+    } else {
+      console.error("Unexpected n8n format:", JSON.stringify(webhookData));
+      throw new Error("Could not find 'questions' in n8n response");
+    }
+    console.log(`Extracted ${questions.length} questions. Saving to Quiz ID: ${newQuiz.id}...`);
+    // 6. Update the SPECIFIC Quiz Row (completed)
+    const { error: updateError } = await supabase.from('quizzes').update({
+      questions: questions,
+      status: 'completed'
+    }).eq('id', newQuiz.id); // Update ONLY the row we just created
+    if (updateError) {
+      console.error('DB Update Error:', updateError);
+      throw updateError;
+    }
+    // 7. Return success
     return new Response(JSON.stringify({
       success: true,
-      data: webhookData
+      quizId: newQuiz.id,
+      data: questions
     }), {
       headers: {
         ...corsHeaders,
@@ -63,6 +93,9 @@ serve(async (req)=>{
     });
   } catch (error) {
     console.error('Error in generate-quiz:', error);
+    // If possible, try to mark the specific quiz as failed (if we have an ID)
+    // Note: We can't easily access newQuiz.id here if it wasn't created yet, 
+    // but we can try to update based on notebook_id if needed, or just leave it.
     return new Response(JSON.stringify({
       error: error.message || 'Failed to generate quiz'
     }), {
